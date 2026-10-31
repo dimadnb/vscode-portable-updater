@@ -1,27 +1,14 @@
 # VS Code Portable Updater
 
-Update the official Windows portable version of Visual Studio Code with a double-click. Keep your `data` folder and personal folders, move old build folders out of the installation root, and restore the previous application files if an update fails.
-
-## Requirements
-
-- An existing **VS Code Stable ZIP installation** for **x64 or ARM64**, with `Code.exe` and a `data` folder next to each other.
-- **Windows PowerShell 5.1**, included with Windows 10 and 11. The `.cmd` launchers use it automatically; PowerShell 7 can also run the script directly.
-- Internet access, permission to write to the VS Code folder, and enough free space for the download and extracted files.
-
-No Python, Git, Node.js, extra PowerShell modules or administrator account is needed. This updater does not install VS Code from scratch. If you do not have a portable installation yet, follow Microsoft's [Portable mode guide](https://code.visualstudio.com/docs/setup/portable).
+One Windows script for updating the official **VS Code Stable ZIP distribution**. Includes a menu, progress bars, resumable downloads and rollback. The interface is in English.
 
 ## Quick start
 
-1. **Download and extract this project's ZIP.** In File Explorer, right-click it and choose **Extract All**. Do not run the updater from inside the ZIP.
-2. **Find your portable VS Code folder.** It must contain both `Code.exe` and `data`.
-3. **Copy these three files directly into that folder:**
-   - `Update-VSCodePortable.ps1`
-   - `Update.cmd`
-   - `Rollback.cmd`
-4. **Save your work and close VS Code**, including terminals and tunnels running from that installation.
-5. **Double-click `Update.cmd` in File Explorer.** Wait for `Done`, then open `Code.exe` as usual. If your version is already current and no old builds need cleaning up, the updater reports that instead.
-
-Place the files beside `Code.exe`, not inside `data`, `bin` or a build folder:
+1. Download **`vscode-portable-updater.cmd`**, or extract it from this project's ZIP.
+2. Put it beside **`Code.exe` and `data`** in your portable VS Code folder.
+3. Save your work and close that VS Code installation, including its terminals and tunnels.
+4. Double-click **`vscode-portable-updater.cmd`**, then press **Enter** to update.
+5. Wait for `Finished successfully. [0]`, then open `Code.exe` normally.
 
 ```text
 VSCode/
@@ -29,73 +16,88 @@ VSCode/
   data/
   bin/
   <build folder>/
-  Update-VSCodePortable.ps1
-  Update.cmd
-  Rollback.cmd
+  vscode-portable-updater.cmd    <- the only updater file you need
 ```
 
-You can keep this README anywhere convenient. The updater detects the installation path, version and architecture automatically. Use `Update.cmd` again whenever you want to check for updates.
+The README is optional. If you keep the script elsewhere, use **Choose folder** in its menu. When upgrading from the earlier updater, you can remove its `Update.cmd`, `Rollback.cmd` and `Update-VSCodePortable.ps1`. Keep `.vscode-portable-updater`: the new script understands existing recovery journals.
 
-## What is preserved
+Requires Windows with **Windows PowerShell 5.1 and .NET Framework**, internet access and write access to the installation folder. No Python, Git, curl installation, extra modules or administrator account is needed. x64 and ARM64 packages are supported; the installed architecture is preserved. This is a console application, not a graphical installer.
 
-**The updater leaves `data` in place.** Settings, extensions and session data stored there are not copied, replaced or deleted. Separate personal folders beside `data`, such as `projects` or `scripts`, also stay in place. Unknown folders are not removed just because their names look like hashes.
+If you do not already have a portable installation, follow Microsoft's [Portable mode guide](https://code.visualstudio.com/docs/setup/portable). The updater does not convert an installer-based version or create an empty profile for you.
 
-Application folders such as `bin`, recognized `tools`/`appx`/`policies`, and recognized build folders are replaced as a whole. If you put personal files inside them, those files remain in the backup and are not automatically copied into the new version. Keep personal projects in separate folders. If a new application entry conflicts with an unknown personal item, the updater stops.
+## Menu
 
-## Backups and recovery
+| Action | What it does |
+| --- | --- |
+| Update | Install the latest Stable release, or clean recognized old builds using the current release. |
+| Check version | Compare installed and available versions without downloading the ZIP or changing installation files. |
+| Rollback | Restore application files from the last successful update. |
+| Choose folder | Select another portable installation. |
+| Reinstall | Replace the current program files even if the version is already current. |
+| Use one connection | Disable parallel downloading for this run, for connections or proxies that work better that way. |
 
-Before replacing files, the updater downloads and extracts the new release, checks its SHA-256, Microsoft signature, version and architecture, and checks command-line startup. Downloads and redirects are restricted to the official HTTPS update and download hosts. Running instances are never forcibly closed.
+## Downloads and progress
 
-Old application files, including recognized old hash folders, are moved into:
+- Up to **four concurrent HTTP ranges** for archives of at least 16 MB, when supported by the server. Actual speed depends on the connection and server; four connections do not guarantee four times the speed.
+- Download progress shows bytes, percentage, current speed and estimated time remaining. Extraction has its own progress bar.
+- Partial ranges remain cached after a disconnect, cancellation or failed run. Running the updater again resumes them for the same release.
+- If ranges are unavailable, the updater uses one streaming connection. Partial streaming downloads restart instead of resuming.
+- **15 seconds** to receive response headers; **20 seconds** without incoming data; at most **three attempts per request/range**, with 2- and 4-second retry delays. Metadata has a **60-second total limit**; downloading and assembly have a **15-minute total limit**. There is no unlimited retry loop.
+- **Esc** cancels a network operation and keeps downloaded parts. Keep the window open during file replacement. After a forced interruption, choose Update to recover the previous installation first.
+
+The source and each redirect must use an allowed Microsoft HTTPS host. The completed archive must match Microsoft's SHA-256. Microsoft signatures, version, commit, architecture and command-line startup are checked before replacement, and the installed application is checked again afterwards. A checksum mismatch discards the download cache; it never bypasses verification.
+
+## Data, backups and disk space
+
+**`data` and separate personal folders in the installation root stay in place.** Unknown folders are not deleted just because their names look like hashes. Recognized application folders are replaced as a whole. Personal files placed inside `bin`, build folders or other managed application folders remain in the backup and are not copied into the new program.
+
+Runtime files are created only as needed under `.vscode-portable-updater`:
 
 ```text
-.vscode-portable-updater/tx-<date>-<time>-<id>/old/
+.vscode-portable-updater/
+  last-run.log                  status and diagnostic messages
+  downloads/<sha256>/           resumable parts and the verified archive
+  tx-<date>-<time>-<id>/
+    journal.json                recovery state
+    old/                        previous program files and old builds
 ```
 
-**This cleans the installation root but does not immediately free disk space.** Backups remain available until you remove them yourself.
+Old hash folders leave the installation root but remain in the backup, so cleanup does **not immediately free their disk space**. The updater checks free space before downloading and extracting. Download parts temporarily coexist with the assembled archive; successful updates clear that release's download cache.
 
-- To undo the last successful update, close VS Code and double-click **`Rollback.cmd`**. This restores application files, not an earlier copy of your settings.
-- If an update fails during replacement, the updater attempts to restore the previous files automatically.
-- If the updater was interrupted, run **`Update.cmd`** again. It first recovers the previous installation and exits. Run it once more to start a new update.
-- If recovery cannot finish because a file is locked, close the process using that file and retry. Keep the entire `.vscode-portable-updater` folder until recovery finishes.
+After checking that VS Code works, you may remove unwanted `tx-...` folders while the updater is closed. Open `journal.json` in Notepad first: only remove operations marked `Committed` or `RolledBack`. Keep the latest successful backup if you want rollback. Never delete an operation marked `Applying` or `RollingBack`.
 
-After checking that VS Code works, you may delete unwanted `tx-...` folders while the updater is closed. Open each folder's `journal.json` in Notepad first: delete only completed operations marked `Committed` or `RolledBack`. Keep the latest `Committed` folder if you want rollback available. Never delete an operation marked `Applying` or `RollingBack`.
+Rollback restores **program files**, not a previous copy of settings or profile changes made by VS Code. Back up important personal data separately. If a backup is incomplete or recovery cannot finish, the updater reports an error and keeps the recovery files.
 
-The updater does not back up `data` or undo profile changes made by VS Code after you launch it. Back up important personal data separately.
+## Error codes
 
-## Optional PowerShell commands
+The console shows a numeric code and a readable reason. The same number is returned to the calling process. Update and rollback runs also write `.vscode-portable-updater/last-run.log`.
 
-Run these from the folder containing the script:
-
-```powershell
-# Check versions without downloading the ZIP or changing the installation
-.\Update-VSCodePortable.ps1 -CheckOnly
-
-# Update an installation in another folder
-.\Update-VSCodePortable.ps1 -Path 'D:\Tools\VSCode'
-
-# Reinstall the current official release and clean recognized old builds
-.\Update-VSCodePortable.ps1 -Reinstall
-
-# Restore the files from the last successful update
-.\Update-VSCodePortable.ps1 -Rollback
-
-# Refuse to move these names even if they are recognized as application entries
-.\Update-VSCodePortable.ps1 -Keep 'tools','my-files'
-```
-
-Ordinary unknown personal folders are already preserved; `-Keep` adds an explicit protection rule. It accepts names in the installation root, not full paths. To use it on every double-click, add the option to the PowerShell command in `Update.cmd`.
-
-## Troubleshooting
-
-| Message or situation | What to do |
+| Code | Meaning / next step |
 | --- | --- |
-| No `data` folder | Check that this is an existing portable ZIP installation. Do not create an empty `data` folder in an installer-based version as a shortcut. See the [Portable mode guide](https://code.visualstudio.com/docs/setup/portable). |
-| VS Code is still running | Save your work, close that installation and its tunnels, then retry. An inaccessible VS Code process path also causes the updater to stop. |
-| Network, checksum or signature error | Check your connection and Windows date/time, then retry. These checks happen before replacement; do not disable them. |
-| Windows blocks the downloaded files | If you trust the download, open the ZIP's **Properties**, select **Unblock** if available, and extract it again. Organization policies may still prevent execution. |
-| Not enough space or access denied | Free space or use a folder you can write to, then retry. Do not delete an unfinished recovery operation. |
+| 0 | Completed successfully. |
+| 2 | Cancelled or exited the menu. Run again to resume a download. |
+| 10 | Invalid installation, folder conflict or incompatible options. Check the folder and message. |
+| 11 | A relevant process is running. Save your work, close it and retry. |
+| 12 | Another updater may hold the installation lock. Close it before retrying. |
+| 20 | Network failure; retry budget exhausted. Check your connection and run again. |
+| 21 | Connection, idle or total timeout. Check the connection; saved parts can resume. |
+| 22 | HTTP error or inconsistent server response. The message includes the reason. |
+| 23 | Disallowed source/redirect or TLS trust failure. Check Windows time and trust; do not disable certificate checks. |
+| 30 | Checksum or cache integrity failure. Retry a fresh download; if instructed, remove only `downloads` while the updater is closed. |
+| 31 | Invalid or unsupported ZIP layout. The existing application has not been replaced. |
+| 32 | Missing or invalid Microsoft signature. Do not bypass the check. |
+| 40 | Insufficient disk space. Free space without deleting unfinished recovery files. |
+| 41 | File access or filesystem error. Check permissions, locks and paths. |
+| 50 | Update failed; previous application files were restored. |
+| 51 | Recovery needs attention, or no suitable rollback exists. Keep backups and follow the message. |
+| 99 | Unexpected/startup error. Save the message and log for diagnosis. |
 
-The launchers use `ExecutionPolicy Bypass` for their PowerShell process only; they do not change the system execution policy. The updater is intended for the official Stable ZIP distribution. Insiders, VSCodium, PortableApps wrappers, x86, UNC paths and drive roots are not supported. Links or junctions in the installation path or managed application files cause it to stop. If Microsoft changes the package layout or download hosts, it may stop until the script is updated.
+For scripted use, set `VSCPU_ACTION` to `Update`, `Check` or `Rollback` and optionally set `VSCPU_PATH` before launching the CMD file. This skips the menu and closing prompt. Clear these environment variables afterwards to return to interactive use.
 
-Official documentation: [Portable mode](https://code.visualstudio.com/docs/setup/portable) · [VS Code on Windows](https://code.visualstudio.com/docs/setup/windows).
+## Notes
+
+The CMD contains its PowerShell and embedded .NET download helper; it does not unpack a separate PS1 launcher. Execution policy is changed only for that process. Organization policies may still block script execution or runtime compilation. If Windows blocks a trusted downloaded ZIP, use **Properties > Unblock** before extracting it.
+
+Insiders, VSCodium, PortableApps wrappers, x86, UNC paths and drive roots are outside this updater's scope. Links/junctions in managed paths are refused. ARM64 selection is implemented, but this release was exercised with real x64 binaries. Versioned build folders were tested; legacy layouts and every USB filesystem have not been tested end to end.
+
+Implementation references: [Microsoft Portable mode](https://code.visualstudio.com/docs/setup/portable), [HTTP response/body timeout semantics](https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpcompletionoption), [PowerShell progress bars](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/write-progress), [HTTP range semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-14.2). No external downloader or project code is required at runtime.
