@@ -1,8 +1,20 @@
 @echo off
-setlocal DisableDelayedExpansion
+setlocal EnableExtensions DisableDelayedExpansion
+rem Keep PowerShell 7 and custom module paths out of Windows PowerShell.
+set "PSModulePath="
+set "ERRORLEVEL="
+set "VSCPU_POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+rem A 32-bit file manager must start the native Windows PowerShell host.
+if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "VSCPU_POWERSHELL=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+if exist "%VSCPU_POWERSHELL%" goto powershell_ready
+echo ERROR [13 / POWERSHELL]: Windows PowerShell 5.1 could not be found.
+set "VSCPU_RESULT=13"
+goto finish
+:powershell_ready
 set "VSCPU_FILE=%~f0"
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try{$s=[IO.File]::ReadAllText($env:VSCPU_FILE);$m='#==POWER'+'SHELL==';$i=$s.IndexOf($m);if($i -lt 0){throw 'Embedded script not found.'};& ([scriptblock]::Create($s.Substring($i+$m.Length)))}catch{Write-Host ('ERROR [99 / STARTUP]: '+$_.Exception.Message);exit 99}"
+"%VSCPU_POWERSHELL%" -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "try{$s=[IO.File]::ReadAllText($env:VSCPU_FILE);$m='#==POWER'+'SHELL==';$i=$s.IndexOf($m);if($i -lt 0){throw 'Embedded script not found.'};& ([scriptblock]::Create($s.Substring($i+$m.Length)))}catch{[Console]::Error.WriteLine('ERROR [99 / STARTUP]: '+$_.Exception.Message);exit 99}"
 set "VSCPU_RESULT=%errorlevel%"
+:finish
 if defined VSCPU_ACTION goto finished
 echo.
 echo Press any key to close this window...
@@ -27,6 +39,28 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# Use only the modules shipped with this host, even through an intermediate CMD.
+# Import before reading the installation, creating logs or starting a transaction.
+try {
+    if ($PSVersionTable.PSEdition -ne 'Desktop' -or $PSVersionTable.PSVersion -lt [version]'5.1') {
+        throw 'Start the CMD file with Windows PowerShell 5.1 available.'
+    }
+    if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+        throw 'The native Windows PowerShell host is required on 64-bit Windows.'
+    }
+    $env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules')
+    foreach ($moduleName in @('Microsoft.PowerShell.Management','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Security')) {
+        $manifest = [IO.Path]::Combine($env:PSModulePath, $moduleName, ($moduleName + '.psd1'))
+        Import-Module -Name $manifest -ErrorAction Stop
+    }
+    $PSModuleAutoLoadingPreference = 'None'
+    $null = Get-Command -Name Get-AuthenticodeSignature,Get-FileHash,Get-Item,ConvertFrom-Json,Add-Type,Write-Progress -CommandType Cmdlet,Function -ErrorAction Stop
+} catch {
+    [Console]::Error.WriteLine('ERROR [13 / POWERSHELL]: Required Windows PowerShell components could not be loaded. ' + $_.Exception.Message)
+    [Console]::Error.WriteLine('The installation has not been changed. Check Windows PowerShell 5.1 and system policy; signature verification remains required.')
+    exit 13
+}
 $script:LauncherFile = if ($env:VSCPU_FILE) { $env:VSCPU_FILE } else { $PSCommandPath }
 if (-not $Path) { $Path = if ($env:VSCPU_PATH) { $env:VSCPU_PATH } else { [IO.Path]::GetDirectoryName($script:LauncherFile) } }
 if ($env:VSCPU_ACTION -and $Action -eq 'Menu') { $Action = $env:VSCPU_ACTION }
@@ -34,7 +68,7 @@ $script:FailureCode = 99
 $script:LogFile = $null
 $script:ProgressAt = 0
 $script:ProtectedNames = @('data','.vscode-portable-updater','VSCodePortableUpdater.cmd','Update-VSCodePortable.ps1','Update.cmd','Rollback.cmd',([IO.Path]::GetFileName($script:LauncherFile)))
-$script:ErrorNames = @{2='CANCELLED';10='INSTALLATION';11='RUNNING';12='BUSY';20='NETWORK';21='TIMEOUT';22='HTTP';23='SOURCE';30='CHECKSUM';31='PACKAGE';32='SIGNATURE';40='DISK_SPACE';41='FILE_ACCESS';50='UPDATE_ROLLED_BACK';51='RECOVERY_REQUIRED';99='UNEXPECTED'}
+$script:ErrorNames = @{2='CANCELLED';10='INSTALLATION';11='RUNNING';12='BUSY';13='POWERSHELL';20='NETWORK';21='TIMEOUT';22='HTTP';23='SOURCE';30='CHECKSUM';31='PACKAGE';32='SIGNATURE';40='DISK_SPACE';41='FILE_ACCESS';50='UPDATE_ROLLED_BACK';51='RECOVERY_REQUIRED';99='UNEXPECTED'}
 
 $script:StateName = '.vscode-portable-updater'
 $script:KnownFiles = @('Code.exe','Code.VisualElementsManifest.xml','LICENSE.txt','LICENSES.chromium.html',
@@ -148,7 +182,7 @@ namespace PortableUpdater {
                 CheckUri(uri);
                 using (var request = new HttpRequestMessage(HttpMethod.Get, uri))
                 using (var requestCancel = CancellationTokenSource.CreateLinkedTokenSource(token)) {
-                    request.Headers.UserAgent.ParseAdd("VSCodePortableUpdater/2.0");
+                    request.Headers.UserAgent.ParseAdd("VSCodePortableUpdater/2.0.1");
                     request.Headers.AcceptEncoding.ParseAdd("identity");
                     if (from.HasValue) request.Headers.Range = new RangeHeaderValue(from.Value, to);
                     HttpResponseMessage response;
@@ -768,7 +802,7 @@ function Invoke-Updater {
             try { $lock = [IO.File]::Open($lockPath,'OpenOrCreate','ReadWrite','None') }
             catch [IO.IOException] { Fail 12 'Another updater may be using this installation. Close it and retry.' }
             $script:LogFile=Join-Path $state 'last-run.log'; Assert-PlainPath $script:LogFile
-            [IO.File]::WriteAllText($script:LogFile,('VS Code Portable Updater 2.0 - '+(Get-Date -Format 's')+"`r`n"))
+            [IO.File]::WriteAllText($script:LogFile,('VS Code Portable Updater 2.0.1 - '+(Get-Date -Format 's')+"`r`n"))
         }
         $script:FailureCode=51
         $history = @()
@@ -853,7 +887,7 @@ function Invoke-Updater {
 
 function Start-App {
     try {
-        Write-Host "`n  VS Code Portable Updater 2.0" -ForegroundColor Cyan
+        Write-Host "`n  VS Code Portable Updater 2.0.1" -ForegroundColor Cyan
         Write-Host "  Official Stable | download, update and recovery`n"
         if ($Action -eq 'Menu') {
             while ($true) {
